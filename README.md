@@ -1,59 +1,56 @@
-# Foguinho Render API com IA
+# Foguinho Render API - IA sem Wikipédia
 
-Essa versão adiciona IA real usando OpenAI, mas mantém Wikipédia como fallback.
+Esta versão remove o fallback silencioso para Wikipédia.
 
-## Como funciona
+## O que mudou
 
-- Se `OPENAI_API_KEY` estiver configurada no Render, `/api/chat` usa IA real.
-- Se não tiver chave, `/api/chat` usa Wikipédia.
-- `/api/search` continua usando Wikipédia.
+- `/api/chat` tenta usar OpenAI sempre.
+- Se a OpenAI falhar, a API retorna o erro real em vez de responder com Wikipédia.
+- O Foguinho não vai mais falar "Pesquisei na Wikipédia".
+- O `/health` mostra `mode: "openai-only"`.
 
 ## Variáveis no Render
 
-No Render, abra seu serviço > Environment e adicione:
+Use:
 
 ```text
-OPENAI_API_KEY=sua_chave_aqui
+OPENAI_API_KEY=sua_chave_real
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
-`OPENAI_MODEL` é opcional. Se você não colocar, ele usa `gpt-4.1-mini`.
+Se quiser testar outro modelo disponível na sua conta:
 
-## Deploy
+```text
+OPENAI_MODEL=gpt-5.4-mini
+```
 
-Depois de subir os arquivos no GitHub:
+## Como atualizar
 
-1. Render detecta o push automaticamente, ou
-2. Clique em Manual Deploy > Deploy latest commit.
-
-## Testar
-
-Abra:
+1. Suba estes arquivos no GitHub repo `foguinho-api`.
+2. Faça commit.
+3. No Render, clique em Manual Deploy > Deploy latest commit.
+4. Teste:
 
 ```text
 https://foguinho-api.onrender.com/health
 ```
 
-Se IA estiver ligada, aparece:
+Deve aparecer:
 
 ```json
 {
   "ok": true,
-  "status": "online",
-  "ai": true,
-  "model": "gpt-4.1-mini"
+  "mode": "openai-only",
+  "ai": true
 }
 ```
 
-Teste chat:
+## Teste de chat
 
-```bash
-curl -X POST https://foguinho-api.onrender.com/api/chat \
-  -H "Content-Type: application/json" \
-  -d "{\"question\":\"me explica redstone no minecraft\"}"
+No Minecraft, pergunte:
+
+```text
+me explica redstone no minecraft
 ```
 
-## Importante
-
-Nunca coloque `OPENAI_API_KEY` dentro do mod Minecraft.
-A chave deve ficar somente no Render.
+Se aparecer erro, olhe os logs do Render. Agora o erro será explícito.

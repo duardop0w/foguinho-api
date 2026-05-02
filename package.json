@@ -1,7 +1,7 @@
 {
-  "name": "foguinho-render-api",
-  "version": "1.0.0",
-  "description": "API online do mod Foguinho para pesquisa estilo Google simples e futura IA.",
+  "name": "foguinho-render-api-gemini",
+  "version": "4.0.0",
+  "description": "API online do mod Foguinho usando Gemini API grátis.",
   "main": "server.js",
   "type": "module",
   "scripts": {

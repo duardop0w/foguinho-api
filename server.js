@@ -8,8 +8,8 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const MOD_SECRET = process.env.MOD_SECRET || "";
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 app.use(helmet());
 app.use(cors());
@@ -45,51 +45,42 @@ function limitText(text, max = 1200) {
   return text.slice(0, max - 3) + "...";
 }
 
-function extractOpenAIText(data) {
-  if (typeof data?.output_text === "string" && data.output_text.trim()) {
-    return data.output_text.trim();
+function extractGeminiText(data) {
+  const parts = data?.candidates?.[0]?.content?.parts;
+
+  if (!Array.isArray(parts)) {
+    return "";
   }
 
-  const chunks = [];
-
-  if (Array.isArray(data?.output)) {
-    for (const item of data.output) {
-      if (Array.isArray(item?.content)) {
-        for (const content of item.content) {
-          if (typeof content?.text === "string") {
-            chunks.push(content.text);
-          }
-        }
-      }
-    }
-  }
-
-  return chunks.join("\n").trim();
+  return parts
+    .map((part) => part?.text || "")
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }
 
-function publicOpenAIError(status, bodyText) {
-  // Não mostra chave nem dado sensível. Mostra só o motivo mais útil.
+function publicGeminiError(status, bodyText) {
   try {
     const parsed = JSON.parse(bodyText);
-    const message = parsed?.error?.message || parsed?.message;
+    const message = parsed?.error?.message;
     const code = parsed?.error?.code;
-    const type = parsed?.error?.type;
+    const statusText = parsed?.error?.status;
 
     if (message) {
-      return `${message}${code ? ` (${code})` : ""}${type ? ` [${type}]` : ""}`;
+      return `${message}${code ? ` (code ${code})` : ""}${statusText ? ` [${statusText}]` : ""}`;
     }
   } catch {
     // ignora parse
   }
 
-  return `Erro HTTP ${status} chamando OpenAI.`;
+  return `Erro HTTP ${status} chamando Gemini.`;
 }
 
-async function askOpenAI(question, context = {}) {
-  if (!OPENAI_API_KEY) {
+async function askGemini(question, context = {}) {
+  if (!GEMINI_API_KEY) {
     return {
       ok: false,
-      error: "OPENAI_API_KEY não está configurada no Render."
+      error: "GEMINI_API_KEY não está configurada no Render."
     };
   }
 
@@ -97,32 +88,48 @@ async function askOpenAI(question, context = {}) {
   const streak = context.streak || "";
   const status = context.status || "";
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: OPENAI_MODEL,
-      instructions:
-        "Você é o Foguinho, um mascote fofo de um mod Minecraft de streak de amizade. " +
-        "Responda SEMPRE em português do Brasil. " +
-        "Seja curto, útil, carismático e com personalidade de mascote. " +
-        "Não diga que pesquisou na Wikipédia. Não use links a menos que o usuário peça. " +
-        "Se a pergunta for sobre Minecraft, explique como se estivesse ajudando um iniciante. " +
-        `Contexto do jogador: amigo=${amigo}; streak=${streak}; status=${status}.`,
-      input: question,
-      max_output_tokens: 450
-    })
-  });
+  const prompt =
+    "Você é o Foguinho, um mascote fofo de um mod Minecraft de streak de amizade.\n" +
+    "Responda SEMPRE em português do Brasil.\n" +
+    "Seja curto, útil, carismático e com personalidade de mascote.\n" +
+    "Se a pergunta for sobre Minecraft, explique como se estivesse ajudando um iniciante.\n" +
+    "Se não tiver certeza, diga que não tem certeza.\n" +
+    `Contexto do jogador: amigo=${amigo}; streak=${streak}; status=${status}.\n\n` +
+    `Pergunta do jogador: ${question}`;
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_API_KEY
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: prompt
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.8,
+          maxOutputTokens: 450
+        }
+      })
+    }
+  );
 
   const bodyText = await response.text();
 
   if (!response.ok) {
     return {
       ok: false,
-      error: publicOpenAIError(response.status, bodyText)
+      error: publicGeminiError(response.status, bodyText)
     };
   }
 
@@ -133,16 +140,16 @@ async function askOpenAI(question, context = {}) {
   } catch {
     return {
       ok: false,
-      error: "A OpenAI respondeu, mas a resposta não veio em JSON."
+      error: "O Gemini respondeu, mas a resposta não veio em JSON."
     };
   }
 
-  const answer = extractOpenAIText(data);
+  const answer = extractGeminiText(data);
 
   if (!answer) {
     return {
       ok: false,
-      error: "A OpenAI respondeu, mas não encontrei texto na resposta."
+      error: "O Gemini respondeu, mas não encontrei texto na resposta."
     };
   }
 
@@ -156,10 +163,11 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     name: "Foguinho Render API",
-    version: "3.0.0",
-    mode: "openai-only",
-    ai: Boolean(OPENAI_API_KEY),
-    model: OPENAI_API_KEY ? OPENAI_MODEL : null,
+    version: "4.0.0",
+    mode: "gemini-free",
+    ai: Boolean(GEMINI_API_KEY),
+    provider: "gemini",
+    model: GEMINI_API_KEY ? GEMINI_MODEL : null,
     endpoints: ["/health", "/api/chat"]
   });
 });
@@ -168,53 +176,57 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     status: "online",
-    mode: "openai-only",
-    ai: Boolean(OPENAI_API_KEY),
-    model: OPENAI_API_KEY ? OPENAI_MODEL : null,
+    mode: "gemini-free",
+    ai: Boolean(GEMINI_API_KEY),
+    provider: "gemini",
+    model: GEMINI_API_KEY ? GEMINI_MODEL : null,
     time: new Date().toISOString()
   });
 });
 
 app.post("/api/search", checkSecret, async (req, res) => {
-  // Mantive este endpoint só para compatibilidade.
-  return app._router.handle(req, res);
+  // Compatibilidade com versões antigas.
+  return handleChat(req, res);
 });
 
-app.post("/api/chat", checkSecret, async (req, res) => {
+app.post("/api/chat", checkSecret, handleChat);
+
+async function handleChat(req, res) {
   try {
     const question = String(req.body?.question || "").trim();
 
     if (!question) {
       return res.status(400).json({
         ok: false,
-        source: "openai",
-        error: "Campo 'question' é obrigatório."
+        source: "gemini",
+        error: "Campo 'question' é obrigatório.",
+        answer: "Digite uma pergunta primeiro."
       });
     }
 
-    const result = await askOpenAI(question, {
+    const result = await askGemini(question, {
       amigo: req.body?.amigo,
       streak: req.body?.streak,
       status: req.body?.status
     });
 
     if (!result.ok) {
-      console.error("Erro OpenAI:", result.error);
+      console.error("Erro Gemini:", result.error);
 
       return res.status(502).json({
         ok: false,
-        source: "openai-error",
+        source: "gemini-error",
         error: result.error,
         answer:
-          "A IA real não respondeu agora. Verifique no Render se a OPENAI_API_KEY está certa e se sua conta OpenAI tem créditos/billing ativo. Erro: " +
+          "A IA grátis do Gemini não respondeu agora. Verifique no Render se GEMINI_API_KEY está configurada e se a chave está ativa. Erro: " +
           result.error
       });
     }
 
     return res.json({
       ok: true,
-      source: "openai",
-      model: OPENAI_MODEL,
+      source: "gemini",
+      model: GEMINI_MODEL,
       answer: result.answer
     });
   } catch (error) {
@@ -227,11 +239,11 @@ app.post("/api/chat", checkSecret, async (req, res) => {
       answer: "Erro interno na API do Foguinho. Veja os logs do Render."
     });
   }
-});
+}
 
 app.listen(PORT, () => {
   console.log(`Foguinho API online na porta ${PORT}`);
-  console.log(`Modo: OpenAI only`);
-  console.log(`IA OpenAI: ${OPENAI_API_KEY ? "ligada" : "desligada"}`);
-  console.log(`Modelo: ${OPENAI_API_KEY ? OPENAI_MODEL : "nenhum"}`);
+  console.log(`Modo: Gemini grátis`);
+  console.log(`Gemini API: ${GEMINI_API_KEY ? "ligada" : "desligada"}`);
+  console.log(`Modelo: ${GEMINI_API_KEY ? GEMINI_MODEL : "nenhum"}`);
 });

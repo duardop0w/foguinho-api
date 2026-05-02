@@ -8,20 +8,22 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const MOD_SECRET = process.env.MOD_SECRET || "";
 
+// IA real opcional
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
 app.use(helmet());
 app.use(cors());
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "128kb" }));
 
 app.use(rateLimit({
   windowMs: 60 * 1000,
-  limit: 60,
+  limit: 80,
   standardHeaders: true,
   legacyHeaders: false
 }));
 
 function checkSecret(req, res, next) {
-  // Se MOD_SECRET estiver vazio, a API aceita requisições sem token.
-  // Se você definir MOD_SECRET no Render, o mod precisa enviar o mesmo token no header x-foguinho-secret.
   if (!MOD_SECRET) {
     return next();
   }
@@ -38,7 +40,7 @@ function checkSecret(req, res, next) {
   next();
 }
 
-function limitText(text, max = 900) {
+function limitText(text, max = 1100) {
   if (!text) return "";
   if (text.length <= max) return text;
   return text.slice(0, max - 3) + "...";
@@ -60,6 +62,67 @@ function localFoguinhoAnswer(question = "") {
   }
 
   return "Não consegui pesquisar agora, mas posso tentar de novo se você escrever a pergunta de outro jeito.";
+}
+
+function extractOpenAIText(data) {
+  if (typeof data?.output_text === "string" && data.output_text.trim()) {
+    return data.output_text.trim();
+  }
+
+  const chunks = [];
+
+  if (Array.isArray(data?.output)) {
+    for (const item of data.output) {
+      if (Array.isArray(item?.content)) {
+        for (const content of item.content) {
+          if (typeof content?.text === "string") {
+            chunks.push(content.text);
+          }
+        }
+      }
+    }
+  }
+
+  return chunks.join("\n").trim();
+}
+
+async function askOpenAI(question) {
+  if (!OPENAI_API_KEY) {
+    return null;
+  }
+
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      instructions:
+        "Você é o Foguinho, um mascote fofo de Minecraft. " +
+        "Responda em português do Brasil, de forma curta, útil e amigável. " +
+        "Se a pergunta for sobre Minecraft, explique como se estivesse ajudando um jogador iniciante. " +
+        "Se for uma pergunta geral, responda direto. " +
+        "Não invente links. Se não tiver certeza, diga que não tem certeza.",
+      input: question,
+      max_output_tokens: 450
+    })
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`OpenAI error ${response.status}: ${text}`);
+  }
+
+  const data = await response.json();
+  const answer = extractOpenAIText(data);
+
+  if (!answer) {
+    return "A IA respondeu, mas não consegui ler o texto da resposta.";
+  }
+
+  return limitText(answer, 1200);
 }
 
 async function wikiSearchTitle(query) {
@@ -109,11 +172,33 @@ async function wikiSummary(title) {
   };
 }
 
+async function askWikipedia(question) {
+  const title = await wikiSearchTitle(question);
+
+  if (!title) {
+    return {
+      source: "local",
+      answer: localFoguinhoAnswer(question)
+    };
+  }
+
+  const summary = await wikiSummary(title);
+
+  return {
+    source: "wikipedia",
+    title: summary.title,
+    answer: `Pesquisei na Wikipédia: ${summary.title}. ${limitText(summary.extract, 900)}`,
+    url: summary.url
+  };
+}
+
 app.get("/", (_req, res) => {
   res.json({
     ok: true,
     name: "Foguinho Render API",
-    version: "1.0.0",
+    version: "2.0.0",
+    ai: Boolean(OPENAI_API_KEY),
+    model: OPENAI_API_KEY ? OPENAI_MODEL : null,
     endpoints: ["/health", "/api/search", "/api/chat"]
   });
 });
@@ -122,6 +207,8 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     status: "online",
+    ai: Boolean(OPENAI_API_KEY),
+    model: OPENAI_API_KEY ? OPENAI_MODEL : null,
     time: new Date().toISOString()
   });
 });
@@ -137,24 +224,11 @@ app.post("/api/search", checkSecret, async (req, res) => {
       });
     }
 
-    const title = await wikiSearchTitle(question);
-
-    if (!title) {
-      return res.json({
-        ok: true,
-        source: "local",
-        answer: localFoguinhoAnswer(question)
-      });
-    }
-
-    const summary = await wikiSummary(title);
+    const result = await askWikipedia(question);
 
     return res.json({
       ok: true,
-      source: "wikipedia",
-      title: summary.title,
-      answer: `Pesquisei na Wikipédia: ${summary.title}. ${limitText(summary.extract, 900)}`,
-      url: summary.url
+      ...result
     });
   } catch (error) {
     return res.status(500).json({
@@ -167,8 +241,6 @@ app.post("/api/search", checkSecret, async (req, res) => {
 });
 
 app.post("/api/chat", checkSecret, async (req, res) => {
-  // Por enquanto, chat usa a mesma busca da Wikipédia.
-  // Depois dá para plugar uma IA real aqui usando uma chave guardada no Render.
   try {
     const question = String(req.body?.question || "").trim();
 
@@ -179,50 +251,50 @@ app.post("/api/chat", checkSecret, async (req, res) => {
       });
     }
 
-    const q = question.toLowerCase();
+    // Primeiro tenta IA real, se OPENAI_API_KEY existir.
+    const aiAnswer = await askOpenAI(question);
 
-    if (
-      q.includes("foguinho") ||
-      q.includes("streak") ||
-      q.includes("renovar") ||
-      q.includes("amizade")
-    ) {
+    if (aiAnswer) {
       return res.json({
         ok: true,
-        source: "foguinho-local",
-        answer: localFoguinhoAnswer(question)
+        source: "openai",
+        model: OPENAI_MODEL,
+        answer: aiAnswer
       });
     }
 
-    const title = await wikiSearchTitle(question);
-
-    if (!title) {
-      return res.json({
-        ok: true,
-        source: "local",
-        answer: localFoguinhoAnswer(question)
-      });
-    }
-
-    const summary = await wikiSummary(title);
+    // Sem chave de IA, usa Wikipédia como fallback.
+    const result = await askWikipedia(question);
 
     return res.json({
       ok: true,
-      source: "wikipedia",
-      title: summary.title,
-      answer: `Achei isso: ${summary.title}. ${limitText(summary.extract, 900)}`,
-      url: summary.url
+      ...result
     });
   } catch (error) {
-    return res.status(500).json({
-      ok: false,
-      source: "error",
-      error: "Erro pesquisando online.",
-      fallback: localFoguinhoAnswer(String(req.body?.question || ""))
-    });
+    console.error(error);
+
+    // Se OpenAI falhar, tenta Wikipédia antes de desistir.
+    try {
+      const question = String(req.body?.question || "").trim();
+      const result = await askWikipedia(question);
+
+      return res.json({
+        ok: true,
+        warning: "A IA falhou, usei Wikipédia.",
+        ...result
+      });
+    } catch {
+      return res.status(500).json({
+        ok: false,
+        source: "error",
+        error: "Erro pesquisando online.",
+        fallback: localFoguinhoAnswer(String(req.body?.question || ""))
+      });
+    }
   }
 });
 
 app.listen(PORT, () => {
   console.log(`Foguinho API online na porta ${PORT}`);
+  console.log(`IA OpenAI: ${OPENAI_API_KEY ? "ligada" : "desligada"}`);
 });

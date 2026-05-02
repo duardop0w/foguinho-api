@@ -1,69 +1,59 @@
-# Foguinho Render API
+# Foguinho Render API com IA
 
-API online simples para o mod Foguinho.
+Essa versão adiciona IA real usando OpenAI, mas mantém Wikipédia como fallback.
 
-## O que ela faz
+## Como funciona
 
-- `GET /health` testa se a API está online.
-- `POST /api/search` pesquisa na Wikipédia em português.
-- `POST /api/chat` responde perguntas simples do Foguinho e usa Wikipédia para perguntas gerais.
-
-Isso ainda não é IA real com chave paga. É um backend seguro para começar e depois plugar uma IA real sem expor chave dentro do mod.
-
-## Rodar local
-
-```bash
-npm install
-npm start
-```
-
-Teste:
-
-```bash
-curl http://localhost:10000/health
-```
-
-Pesquisa:
-
-```bash
-curl -X POST http://localhost:10000/api/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\"question\":\"quem foi Albert Einstein\"}"
-```
-
-## Subir no GitHub
-
-1. Crie um repositório chamado `foguinho-api`.
-2. Suba estes arquivos.
-3. No Render: New > Web Service.
-4. Conecte o repo do GitHub.
-5. Build Command: `npm install`
-6. Start Command: `npm start`
+- Se `OPENAI_API_KEY` estiver configurada no Render, `/api/chat` usa IA real.
+- Se não tiver chave, `/api/chat` usa Wikipédia.
+- `/api/search` continua usando Wikipédia.
 
 ## Variáveis no Render
 
-Opcional:
+No Render, abra seu serviço > Environment e adicione:
 
 ```text
-MOD_SECRET=algum-token-secreto
+OPENAI_API_KEY=sua_chave_aqui
+OPENAI_MODEL=gpt-4.1-mini
 ```
 
-Se usar `MOD_SECRET`, o mod precisa enviar esse token no header:
+`OPENAI_MODEL` é opcional. Se você não colocar, ele usa `gpt-4.1-mini`.
+
+## Deploy
+
+Depois de subir os arquivos no GitHub:
+
+1. Render detecta o push automaticamente, ou
+2. Clique em Manual Deploy > Deploy latest commit.
+
+## Testar
+
+Abra:
 
 ```text
-x-foguinho-secret: algum-token-secreto
+https://foguinho-api.onrender.com/health
 ```
 
-## Próximo passo
+Se IA estiver ligada, aparece:
 
-Depois que a API estiver online, copie a URL do Render, tipo:
-
-```text
-https://foguinho-api.onrender.com
+```json
+{
+  "ok": true,
+  "status": "online",
+  "ai": true,
+  "model": "gpt-4.1-mini"
+}
 ```
 
-Aí o mod precisa chamar:
+Teste chat:
 
-```text
-POST https://foguinho-api.onrender.com/api/chat
+```bash
+curl -X POST https://foguinho-api.onrender.com/api/chat \
+  -H "Content-Type: application/json" \
+  -d "{\"question\":\"me explica redstone no minecraft\"}"
 ```
+
+## Importante
+
+Nunca coloque `OPENAI_API_KEY` dentro do mod Minecraft.
+A chave deve ficar somente no Render.

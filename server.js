@@ -39,10 +39,15 @@ function checkSecret(req, res, next) {
   next();
 }
 
-function limitText(text, max = 1200) {
+function limitText(text, max = 1100) {
   if (!text) return "";
-  if (text.length <= max) return text;
-  return text.slice(0, max - 3) + "...";
+  const cleaned = text
+    .replace(/\r/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (cleaned.length <= max) return cleaned;
+  return cleaned.slice(0, max - 3) + "...";
 }
 
 function extractGeminiText(data) {
@@ -76,6 +81,51 @@ function publicGeminiError(status, bodyText) {
   return `Erro HTTP ${status} chamando Gemini.`;
 }
 
+function isFoguinhoQuestion(question) {
+  const q = question.toLowerCase();
+
+  return (
+    q.includes("foguinho") ||
+    q.includes("streak") ||
+    q.includes("renovar") ||
+    q.includes("meu status") ||
+    q.includes("minha streak") ||
+    q.includes("conquista do foguinho")
+  );
+}
+
+function makePrompt(question, context = {}) {
+  const amigo = context.amigo || "Amigo";
+  const streak = context.streak || "0";
+  const status = context.status || "desconhecido";
+
+  return `
+Você é o Foguinho, um mascote fofo de um mod Minecraft de streak de amizade.
+
+REGRAS IMPORTANTES:
+- Responda SEMPRE em português do Brasil.
+- Responda DIRETAMENTE a pergunta do jogador.
+- Não ignore a pergunta para falar só da streak.
+- Use personalidade de mascote, mas sem enrolar.
+- Máximo de 7 linhas curtas.
+- Se a pergunta for sobre Minecraft, dê passos práticos.
+- Se a pergunta for sobre redstone, construção, sobrevivência, mobs, itens ou comandos, explique o assunto pedido.
+- Só fale da streak se a pergunta for sobre o Foguinho/streak ou se couber em uma frase final.
+- Não diga que é Gemini, Google ou API.
+- Não use markdown pesado. Evite tabelas.
+
+Contexto do mod:
+- Amigo atual: ${amigo}
+- Streak atual: ${streak}
+- Status do foguinho: ${status}
+
+Pergunta do jogador:
+${question}
+
+Resposta do Foguinho:
+`.trim();
+}
+
 async function askGemini(question, context = {}) {
   if (!GEMINI_API_KEY) {
     return {
@@ -84,18 +134,7 @@ async function askGemini(question, context = {}) {
     };
   }
 
-  const amigo = context.amigo || "Amigo";
-  const streak = context.streak || "";
-  const status = context.status || "";
-
-  const prompt =
-    "Você é o Foguinho, um mascote fofo de um mod Minecraft de streak de amizade.\n" +
-    "Responda SEMPRE em português do Brasil.\n" +
-    "Seja curto, útil, carismático e com personalidade de mascote.\n" +
-    "Se a pergunta for sobre Minecraft, explique como se estivesse ajudando um iniciante.\n" +
-    "Se não tiver certeza, diga que não tem certeza.\n" +
-    `Contexto do jogador: amigo=${amigo}; streak=${streak}; status=${status}.\n\n` +
-    `Pergunta do jogador: ${question}`;
+  const prompt = makePrompt(question, context);
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`,
@@ -117,8 +156,9 @@ async function askGemini(question, context = {}) {
           }
         ],
         generationConfig: {
-          temperature: 0.8,
-          maxOutputTokens: 450
+          temperature: isFoguinhoQuestion(question) ? 0.85 : 0.55,
+          topP: 0.9,
+          maxOutputTokens: 380
         }
       })
     }
@@ -155,7 +195,7 @@ async function askGemini(question, context = {}) {
 
   return {
     ok: true,
-    answer: limitText(answer, 1200)
+    answer: limitText(answer, 1100)
   };
 }
 
@@ -163,8 +203,8 @@ app.get("/", (_req, res) => {
   res.json({
     ok: true,
     name: "Foguinho Render API",
-    version: "4.0.0",
-    mode: "gemini-free",
+    version: "4.1.0",
+    mode: "gemini-free-improved",
     ai: Boolean(GEMINI_API_KEY),
     provider: "gemini",
     model: GEMINI_API_KEY ? GEMINI_MODEL : null,
@@ -176,7 +216,7 @@ app.get("/health", (_req, res) => {
   res.json({
     ok: true,
     status: "online",
-    mode: "gemini-free",
+    mode: "gemini-free-improved",
     ai: Boolean(GEMINI_API_KEY),
     provider: "gemini",
     model: GEMINI_API_KEY ? GEMINI_MODEL : null,
@@ -184,11 +224,7 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.post("/api/search", checkSecret, async (req, res) => {
-  // Compatibilidade com versões antigas.
-  return handleChat(req, res);
-});
-
+app.post("/api/search", checkSecret, handleChat);
 app.post("/api/chat", checkSecret, handleChat);
 
 async function handleChat(req, res) {
@@ -200,7 +236,7 @@ async function handleChat(req, res) {
         ok: false,
         source: "gemini",
         error: "Campo 'question' é obrigatório.",
-        answer: "Digite uma pergunta primeiro."
+        answer: "Digite uma pergunta primeiro. Exemplo: me explica redstone no Minecraft."
       });
     }
 
@@ -218,7 +254,7 @@ async function handleChat(req, res) {
         source: "gemini-error",
         error: result.error,
         answer:
-          "A IA grátis do Gemini não respondeu agora. Verifique no Render se GEMINI_API_KEY está configurada e se a chave está ativa. Erro: " +
+          "A IA grátis do Gemini não respondeu agora. Verifica se a GEMINI_API_KEY está certa no Render. Erro: " +
           result.error
       });
     }
@@ -243,7 +279,7 @@ async function handleChat(req, res) {
 
 app.listen(PORT, () => {
   console.log(`Foguinho API online na porta ${PORT}`);
-  console.log(`Modo: Gemini grátis`);
+  console.log(`Modo: Gemini grátis melhorado`);
   console.log(`Gemini API: ${GEMINI_API_KEY ? "ligada" : "desligada"}`);
   console.log(`Modelo: ${GEMINI_API_KEY ? GEMINI_MODEL : "nenhum"}`);
 });

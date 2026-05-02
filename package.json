@@ -1,7 +1,7 @@
 {
   "name": "foguinho-render-api-gemini",
-  "version": "4.0.0",
-  "description": "API online do mod Foguinho usando Gemini API grátis.",
+  "version": "4.1.0",
+  "description": "API online do mod Foguinho usando Gemini grátis com prompt melhorado.",
   "main": "server.js",
   "type": "module",
   "scripts": {
